@@ -339,4 +339,109 @@ var defaultNameReferencePathConfigs = []referencePathConfig{
 			},
 		},
 	},
+	{
+		// StatefulSet references headless service, so need to update the references.
+		referencedGVK: schema.GroupVersionKind{
+			Version: "v1",
+			Kind:    "Service",
+		},
+		pathConfigs: []PathConfig{
+			{
+				GroupVersionKind: &schema.GroupVersionKind{
+					Group: "apps",
+					Kind:  "StatefulSet",
+				},
+				Path:               []string{"spec", "serviceName"},
+				CreateIfNotPresent: false,
+			},
+		},
+	},
+	{
+		referencedGVK: schema.GroupVersionKind{
+			Group: "rbac.authorization.k8s.io",
+			Kind:  "Role",
+		},
+		pathConfigs: []PathConfig{
+			{
+				GroupVersionKind: &schema.GroupVersionKind{
+					Group: "rbac.authorization.k8s.io",
+					Kind:  "RoleBinding",
+				},
+				Path:               []string{"roleRef", "name"},
+				CreateIfNotPresent: false,
+			},
+			{
+				GroupVersionKind: &schema.GroupVersionKind{
+					Group: "rbac.authorization.k8s.io",
+					Kind:  "ClusterRoleBinding",
+				},
+				Path:               []string{"roleRef", "name"},
+				CreateIfNotPresent: false,
+			},
+		},
+	},
+	{
+		referencedGVK: schema.GroupVersionKind{
+			Group: "rbac.authorization.k8s.io",
+			Kind:  "ClusterRole",
+		},
+		pathConfigs: []PathConfig{
+			{
+				GroupVersionKind: &schema.GroupVersionKind{
+					Group: "rbac.authorization.k8s.io",
+					Kind:  "RoleBinding",
+				},
+				Path:               []string{"roleRef", "name"},
+				CreateIfNotPresent: false,
+			},
+			{
+				GroupVersionKind: &schema.GroupVersionKind{
+					Group: "rbac.authorization.k8s.io",
+					Kind:  "ClusterRoleBinding",
+				},
+				Path:               []string{"roleRef", "name"},
+				CreateIfNotPresent: false,
+			},
+		},
+	},
+	{
+		referencedGVK: schema.GroupVersionKind{
+			Version: "v1",
+			Kind:    "ServiceAccount",
+		},
+		pathConfigs: []PathConfig{
+			{
+				GroupVersionKind: &schema.GroupVersionKind{
+					Group: "rbac.authorization.k8s.io",
+					Kind:  "RoleBinding",
+				},
+				Path:               []string{"subjects", "name"},
+				CreateIfNotPresent: false,
+			},
+			{
+				GroupVersionKind: &schema.GroupVersionKind{
+					Group: "rbac.authorization.k8s.io",
+					Kind:  "ClusterRoleBinding",
+				},
+				Path:               []string{"subjects", "name"},
+				CreateIfNotPresent: false,
+			},
+			{
+				GroupVersionKind: &schema.GroupVersionKind{
+					Group: "apps",
+					Kind:  "StatefulSet",
+				},
+				Path:               []string{"spec", "template", "spec", "serviceAccountName"},
+				CreateIfNotPresent: false,
+			},
+			{
+				GroupVersionKind: &schema.GroupVersionKind{
+					Group: "apps",
+					Kind:  "Deployment",
+				},
+				Path:               []string{"spec", "template", "spec", "serviceAccountName"},
+				CreateIfNotPresent: false,
+			},
+		},
+	},
 }

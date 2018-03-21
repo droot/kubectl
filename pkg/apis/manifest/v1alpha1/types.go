@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -111,6 +112,9 @@ type Manifest struct {
 	// Overlays fields.
 	SecretGenerators []SecretGenerator `json:"secretGenerators,omitempty" yaml:"secretGenerators,omitempty"`
 
+	// Variables which will be substituted at runtime.
+	Vars []Var `json:"vars,omitempty" yaml:"vars,omitempty"`
+
 	// Whether prune resources not defined in Kube-manifest.yaml, similar to
 	// `kubectl apply --prune` behavior.
 	Prune bool `json:"prune,omitempty" yaml:"prune,omitempty"`
@@ -178,4 +182,18 @@ type DataSources struct {
 	// pairs to create a configmap.
 	// i.e. a Docker .env file or a .ini file.
 	EnvSource string `json:"env,omitempty" yaml:"env,omitempty"`
+}
+
+// Var represents a variable whose value will be source'd from a Kubernetes object
+// and will be substituted at runtime.
+type Var struct {
+	// Value of identifier name e.g. FOO used in container args, annotations
+	// Appears in pod template as $(FOO)
+	Name string `json:"name" yaml:"name"`
+
+	// ObjRef refers to a Kubernetes Resource
+	ObjRef corev1.ObjectReference `json:"objref" yaml:"objref"`
+
+	// FieldRef refers to the fieldpath to extract value from a Kubernetes Object
+	FieldRef corev1.ObjectFieldSelector `json:"fieldref" yaml:"objref"`
 }

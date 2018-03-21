@@ -17,6 +17,7 @@ limitations under the License.
 package commands
 
 import (
+	"flag"
 	"io"
 	"os"
 
@@ -49,6 +50,9 @@ Find more information at:
 		// 'set' sub command
 		newCmdSet(stdOut, stdErr, fsys),
 	)
+
+	// add the glog flags
+	c.PersistentFlags().AddGoFlagSet(flag.CommandLine)
 
 	return c
 }

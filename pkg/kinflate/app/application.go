@@ -17,13 +17,18 @@ limitations under the License.
 package app
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/ghodss/yaml"
+	"github.com/golang/glog"
 
 	manifest "k8s.io/kubectl/pkg/apis/manifest/v1alpha1"
 	"k8s.io/kubectl/pkg/kinflate/constants"
 	interror "k8s.io/kubectl/pkg/kinflate/internal/error"
 	"k8s.io/kubectl/pkg/kinflate/resource"
 	"k8s.io/kubectl/pkg/kinflate/transformers"
+	"k8s.io/kubectl/pkg/kinflate/types"
 	"k8s.io/kubectl/pkg/loader"
 )
 
@@ -33,6 +38,9 @@ type Application interface {
 	// RawResources computes and returns the raw resources from the manifest.
 	// It contains resources from 1) untransformed resources from current manifest 2) transformed resources from sub packages
 	RawResources() (resource.ResourceCollection, error)
+
+	// Vars returns all the variables defined by the App.
+	Vars() ([]manifest.Var, error)
 }
 
 var _ Application = &applicationImpl{}
@@ -130,6 +138,22 @@ func (a *applicationImpl) Resources() (resource.ResourceCollection, error) {
 		return nil, err
 	}
 
+	refvars, err := a.resolveRefVars(allRes)
+	if err != nil {
+		return nil, err
+	}
+
+	glog.Infof("found all the refvars: %+v", refvars)
+
+	varExpander, err := transformers.NewRefVarTransformer(refvars)
+	if err != nil {
+		return nil, err
+	}
+	err = varExpander.Transform(allRes)
+	if err != nil {
+		return nil, err
+	}
+
 	return allRes, nil
 }
 
@@ -148,8 +172,8 @@ func (a *applicationImpl) RawResources() (resource.ResourceCollection, error) {
 	return resource.Merge(resources, subAppResources)
 }
 
-func (a *applicationImpl) subAppResources() (resource.ResourceCollection, *interror.ManifestErrors) {
-	sliceOfSubAppResources := []resource.ResourceCollection{}
+func (a *applicationImpl) subApps() ([]Application, error) {
+	var apps []Application
 	errs := &interror.ManifestErrors{}
 	for _, pkgPath := range a.manifest.Packages {
 		subloader, err := a.loader.New(pkgPath)
@@ -162,6 +186,24 @@ func (a *applicationImpl) subAppResources() (resource.ResourceCollection, *inter
 			errs.Append(err)
 			continue
 		}
+		apps = append(apps, subapp)
+	}
+	if len(errs.Get()) > 0 {
+		return nil, errs
+	}
+	return apps, nil
+}
+
+func (a *applicationImpl) subAppResources() (resource.ResourceCollection, *interror.ManifestErrors) {
+	sliceOfSubAppResources := []resource.ResourceCollection{}
+	errs := &interror.ManifestErrors{}
+
+	subApps, err := a.subApps()
+	if err != nil {
+		return nil, errs
+	}
+
+	for _, subapp := range subApps {
 		// Gather all transformed resources from subpackages.
 		subAppResources, err := subapp.Resources()
 		if err != nil {
@@ -211,6 +253,64 @@ func (a *applicationImpl) getTransformer(patches resource.ResourceCollection) (t
 	return transformers.NewMultiTransformer(ts), nil
 }
 
+// Vars returns all the variables defined at the app and subapps of the app.
+func (a *applicationImpl) Vars() ([]manifest.Var, error) {
+	vars := []manifest.Var{}
+	errs := &interror.ManifestErrors{}
+
+	apps, err := a.subApps()
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO: computing vars and resources for subApps can be combined
+	for _, subApp := range apps {
+		subAppVars, err := subApp.Vars()
+		if err != nil {
+			errs.Append(err)
+			continue
+		}
+		vars = append(vars, subAppVars...)
+	}
+	vars = append(vars, a.manifest.Vars...)
+	if len(errs.Get()) > 0 {
+		return nil, errs
+	}
+	return vars, nil
+}
+
+// resolveRefVars computes the values for each of the referred variables by
+// looking at the transformed resources.
+func (a *applicationImpl) resolveRefVars(resources resource.ResourceCollection) (map[string]string, error) {
+	refvars := map[string]string{}
+	vars, err := a.Vars()
+	if err != nil {
+		return refvars, err
+	}
+
+	for _, refvar := range vars {
+		refGVKN := gvkn(refvar)
+		if r, found := resources[refGVKN]; found {
+			s, err := getFieldAsString(r.Data.UnstructuredContent(), strings.Split(refvar.FieldRef.FieldPath, "."))
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve referred var: %+v", refvar)
+			}
+			refvars[refvar.Name] = s
+		} else {
+			glog.Infof("couldn't resolve refvar: %v", refvar)
+		}
+	}
+	return refvars, nil
+}
+
+// TODO(droot): this will be a method on the Var itself.
+func gvkn(rv manifest.Var) types.GroupVersionKindName {
+	return types.GroupVersionKindName{
+		GVK:  rv.ObjRef.GroupVersionKind(),
+		Name: rv.ObjRef.Name,
+	}
+}
+
 // reindexResourceCollection returns a new instance of ResourceCollection which
 // is indexed using the new name in the object.
 func reindexResourceCollection(rc resource.ResourceCollection) resource.ResourceCollection {
@@ -220,4 +320,43 @@ func reindexResourceCollection(rc resource.ResourceCollection) resource.Resource
 		result[gvkn] = res
 	}
 	return result
+}
+
+func getFieldAsString(m map[string]interface{}, pathToField []string) (string, error) {
+	if len(pathToField) == 0 {
+		return "", fmt.Errorf("field not found")
+	}
+
+	if len(pathToField) == 1 {
+		if v, found := m[pathToField[0]]; found {
+			if s, ok := v.(string); ok {
+				return s, nil
+			}
+			return "", fmt.Errorf("value at fieldpath is not of string type")
+		}
+		return "", fmt.Errorf("field at given fieldpath does not exist")
+	}
+
+	curr, rest := pathToField[0], pathToField[1:]
+
+	v := m[curr]
+	switch typedV := v.(type) {
+	case map[string]interface{}:
+		return getFieldAsString(typedV, rest)
+	// case []interface{}:
+	// 	for i := range typedV {
+	// 		item := typedV[i]
+	// 		typedItem, ok := item.(map[string]interface{})
+	// 		if !ok {
+	// 			return fmt.Errorf("%#v is expectd to be %T", item, typedItem)
+	// 		}
+	// 		err := mutateField(typedItem, newPathToField, createIfNotPresent, fns...)
+	// 		if err != nil {
+	// 			return err
+	// 		}
+	// 	}
+	// 	return nil
+	default:
+		return "", fmt.Errorf("%#v is not expected to be a primitive type", typedV)
+	}
 }
